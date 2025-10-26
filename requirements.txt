@@ -1,0 +1,11 @@
+# TOTG Requirements
+# =================
+
+# Core dependencies
+numpy>=1.24.0
+
+# MCP Server (optional, for MCP integration)
+mcp>=0.1.0
+
+# Note: No heavy ML dependencies required!
+# TF-IDF is implemented from scratch for lightweight deployment
