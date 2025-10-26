@@ -279,6 +279,84 @@ TOOLS = [
             "type": "object",
             "properties": {}
         }
+    ),
+    
+    Tool(
+        name="totg_analyze_long_chain",
+        description="Analyze long temporal chain using Markovian chunking (efficient for 100+ documents)",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_doc_id": {
+                    "type": "string",
+                    "description": "Starting document ID"
+                },
+                "end_doc_id": {
+                    "type": "string",
+                    "description": "Optional end document ID"
+                },
+                "max_days": {
+                    "type": "integer",
+                    "description": "Maximum time horizon in days (default 1825 = 5 years)",
+                    "default": 1825
+                },
+                "chunk_size_days": {
+                    "type": "integer",
+                    "description": "Size of temporal chunks (default 90 = quarterly)",
+                    "default": 90
+                },
+                "detailed_output": {
+                    "type": "boolean",
+                    "description": "Include full document details in results",
+                    "default": False
+                }
+            },
+            "required": ["start_doc_id"]
+        }
+    ),
+    
+    Tool(
+        name="totg_get_temporal_summary",
+        description="Get hierarchical summary of temporal period organized by chunks",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "start_doc_id": {
+                    "type": "string",
+                    "description": "Start document ID"
+                },
+                "end_doc_id": {
+                    "type": "string",
+                    "description": "End document ID"
+                },
+                "num_chunks": {
+                    "type": "integer",
+                    "description": "Number of summary chunks to return",
+                    "default": 10
+                },
+                "chunk_size_days": {
+                    "type": "integer",
+                    "description": "Size of temporal chunks (default 90 days)",
+                    "default": 90
+                }
+            },
+            "required": ["start_doc_id", "end_doc_id"]
+        }
+    ),
+    
+    Tool(
+        name="totg_create_markovian_analyzer",
+        description="Create a separate Markovian analyzer instance with custom settings",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "chunk_size_days": {
+                    "type": "integer",
+                    "description": "Size of temporal chunks (default 90 days)",
+                    "default": 90
+                }
+            }
+        }
     )
 ]
 
@@ -300,7 +378,15 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
     try:
         # Parse timestamp if provided
         if "timestamp" in arguments and arguments["timestamp"]:
-            arguments["timestamp"] = datetime.fromisoformat(arguments["timestamp"])
+            timestamp_str = arguments["timestamp"]
+            try:
+                arguments["timestamp"] = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            except ValueError:
+                # Handle ISO format with Z timezone
+                if timestamp_str.endswith('Z'):
+                    arguments["timestamp"] = datetime.fromisoformat(timestamp_str[:-1] + '+00:00')
+                else:
+                    raise
         
         # Route to appropriate handler
         if name == "totg_add_document":
@@ -398,6 +484,52 @@ async def call_tool(name: str, arguments: Any) -> list[TextContent]:
             
         elif name == "totg_export_graph":
             result = api.export_graph()
+            
+        elif name == "totg_analyze_long_chain":
+            result = api.analyze_long_chain(**arguments)
+            # Convert to dict for JSON serialization
+            if hasattr(result, 'get_summary'):
+                summary = result.get_summary()
+                result_dict = {
+                    'summary': summary,
+                    'start_doc_id': result.start_doc_id,
+                    'end_doc_id': result.end_doc_id,
+                    'total_time_span_days': result.total_time_span.days if hasattr(result.total_time_span, 'days') else str(result.total_time_span),
+                    'num_chunks': result.num_chunks,
+                    'total_documents': result.total_documents,
+                    'total_processing_time': result.total_processing_time,
+                    'avg_chunk_time': result.avg_chunk_time,
+                    'avg_chunk_size': result.avg_chunk_size,
+                    'speedup_factor': result.speedup_factor,
+                    'all_critical_events': result.all_critical_events,
+                    'all_causal_chains': result.all_causal_chains,
+                    'all_key_entities': result.all_key_entities,
+                    'final_carryover': {
+                        'critical_events': result.final_carryover.critical_events,
+                        'key_entities': result.final_carryover.key_entities,
+                        'causal_chains': result.final_carryover.causal_chains,
+                        'attention_scores': result.final_carryover.attention_scores,
+                        'open_questions': result.final_carryover.open_questions,
+                        'chunk_index': result.final_carryover.chunk_index,
+                        'document_count': result.final_carryover.document_count
+                    }
+                }
+                result = result_dict
+            
+        elif name == "totg_get_temporal_summary":
+            summaries = api.get_temporal_summary(**arguments)
+            result = {
+                'summaries': summaries,
+                'count': len(summaries)
+            }
+            
+        elif name == "totg_create_markovian_analyzer":
+            markovian = api.create_markovian_analyzer(**arguments)
+            result = {
+                'message': 'Markovian analyzer created successfully',
+                'chunk_size_days': arguments.get('chunk_size_days', 90),
+                'analyzer_id': id(markovian)  # Unique identifier
+            }
             
         else:
             result = {"error": f"Unknown tool: {name}"}

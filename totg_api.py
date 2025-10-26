@@ -9,7 +9,7 @@ Can be easily wrapped as MCP server, REST API, or used directly.
 """
 
 from typing import Dict, List, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, asdict
 import json
 
@@ -18,6 +18,7 @@ from totg_core_fixed import (
     NodeType, TemporalRelation
 )
 from totg_attention_fixed import BidirectionalAttention
+from totg_markovian import MarkovianTOTG, create_markovian_totg
 
 
 @dataclass
@@ -66,12 +67,20 @@ class TOTGAPI:
         self.graph = TemporalGraph()
         self.attention: Optional[BidirectionalAttention] = None
         self._attention_initialized = False
+        self.markovian: Optional[MarkovianTOTG] = None
+        self._markovian_initialized = False
     
     def _ensure_attention(self):
         """Lazy initialization of attention system"""
         if not self._attention_initialized:
             self.attention = BidirectionalAttention(self.graph)
             self._attention_initialized = True
+    
+    def _ensure_markovian(self, chunk_size_days: int = 90):
+        """Lazy initialization of Markovian system"""
+        if not self._markovian_initialized:
+            self.markovian = MarkovianTOTG(self, chunk_size_days=chunk_size_days)
+            self._markovian_initialized = True
     
     # =========================================================================
     # GRAPH CONSTRUCTION
@@ -95,7 +104,23 @@ class TOTGAPI:
             Dict with status and node info
         """
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = datetime.now(timezone.utc)
+        elif isinstance(timestamp, str):
+            # Handle ISO string timestamps
+            try:
+                timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except ValueError:
+                # Handle ISO format with Z timezone
+                if timestamp.endswith('Z'):
+                    timestamp = datetime.fromisoformat(timestamp[:-1] + '+00:00')
+                else:
+                    raise
+            # Normalize to UTC without timezone
+            timestamp = timestamp.replace(tzinfo=None)
+        elif hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+            # Convert timezone-aware to UTC without timezone
+            timestamp = timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        # else: assume naive datetime is already in correct format
         
         if metadata is None:
             metadata = {}
@@ -412,6 +437,78 @@ class TOTGAPI:
             content=str(node.content),
             metadata=node.metadata
         )
+    
+    # =========================================================================
+    # MARKOVIAN ANALYSIS
+    # =========================================================================
+    
+    def analyze_long_chain(self,
+                         start_doc_id: str,
+                         end_doc_id: Optional[str] = None,
+                         max_days: int = 1825,
+                         chunk_size_days: int = 90,
+                         detailed_output: bool = False,
+                         enable_cache: bool = True):
+        """
+        Analyze long temporal chain using Markovian chunking
+        
+        Args:
+            start_doc_id: Starting document ID
+            end_doc_id: Optional end point
+            max_days: Maximum time horizon (default 5 years)
+            chunk_size_days: Size of temporal chunks (default 90 days)
+            detailed_output: Include full document details
+            enable_cache: Use caching for performance
+        
+        Returns:
+            MarkovianAnalysisResult with complete analysis
+        """
+        self._ensure_markovian(chunk_size_days)
+        
+        return self.markovian.analyze_long_chain(
+            start_doc_id=start_doc_id,
+            end_doc_id=end_doc_id,
+            max_days=max_days,
+            detailed_output=detailed_output,
+            enable_cache=enable_cache
+        )
+    
+    def get_temporal_summary(self,
+                           start_doc_id: str,
+                           end_doc_id: str,
+                           num_chunks: int = 10,
+                           chunk_size_days: int = 90):
+        """
+        Get hierarchical summary of temporal period
+        
+        Args:
+            start_doc_id: Start document
+            end_doc_id: End document
+            num_chunks: Number of summary chunks
+            chunk_size_days: Size of temporal chunks
+        
+        Returns:
+            List of chunk summaries
+        """
+        self._ensure_markovian(chunk_size_days)
+        
+        return self.markovian.get_temporal_summary(
+            start_doc_id=start_doc_id,
+            end_doc_id=end_doc_id,
+            num_chunks=num_chunks
+        )
+    
+    def create_markovian_analyzer(self, chunk_size_days: int = 90) -> MarkovianTOTG:
+        """
+        Create a separate Markovian analyzer instance
+        
+        Args:
+            chunk_size_days: Size of temporal chunks
+        
+        Returns:
+            MarkovianTOTG instance
+        """
+        return create_markovian_totg(self, chunk_size_days)
 
 
 # =============================================================================

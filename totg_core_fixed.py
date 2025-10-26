@@ -16,7 +16,7 @@ Key Fixes:
 import bisect
 from typing import Dict, List, Optional, Tuple, Any, Set
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from enum import Enum
 
@@ -57,8 +57,19 @@ class TemporalNode:
     
     def _compute_layer_id(self) -> str:
         """Compute temporal layer ID based on timestamp"""
-        days_since_epoch = (self.timestamp - datetime(1970, 1, 1)).days
+        # Normalize ALL timestamps to UTC without timezone
+        timestamp_utc = self._normalize_timestamp(self.timestamp)
+        
+        days_since_epoch = (timestamp_utc - datetime(1970, 1, 1)).days
         return f"layer_{days_since_epoch // 7}"  # Weekly layers
+    
+    def _normalize_timestamp(self, timestamp: datetime) -> datetime:
+        """Normalize timestamp to UTC without timezone"""
+        if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+            # Convert timezone-aware to UTC without timezone
+            return timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        # Assume naive datetimes are already UTC
+        return timestamp
 
 
 @dataclass
@@ -98,6 +109,14 @@ class TemporalGraph:
             'layers_created': 0,
             'traversals_performed': 0
         }
+    
+    def _normalize_timestamp(self, timestamp: datetime) -> datetime:
+        """Normalize timestamp to UTC without timezone"""
+        if hasattr(timestamp, 'tzinfo') and timestamp.tzinfo is not None:
+            # Convert timezone-aware to UTC without timezone
+            return timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+        # Assume naive datetimes are already UTC
+        return timestamp
     
     def add_node(self, node: TemporalNode) -> bool:
         """
@@ -142,7 +161,10 @@ class TemporalGraph:
             
             # Validate temporal order for sequential/causal edges
             if edge.relation in [TemporalRelation.SEQUENTIAL, TemporalRelation.CAUSAL]:
-                if from_node.timestamp > to_node.timestamp:
+                # Normalize both timestamps before comparison
+                from_time = self._normalize_timestamp(from_node.timestamp)
+                to_time = self._normalize_timestamp(to_node.timestamp)
+                if from_time > to_time:
                     print(f"Warning: temporal edge goes backward in time")
             
             # Add to forward and reverse indices

@@ -1,0 +1,2 @@
+[console_scripts]
+totg-mcp = totg_mcp_server:main
